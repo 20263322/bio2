@@ -4,13 +4,17 @@ import time
 # 웹페이지 기본 설정
 st.set_page_config(page_title="Bio-II ZPD Diagnostic System", page_icon="🧬", layout="centered")
 
-# 세션 상태 초기화 (재진단 이력 저장용)
+# 세션 상태(Session State) 초기화
 if 'history' not in st.session_state:
-    st.session_state.history = {}  # 단원별 이전 진단 기록 저장
+    st.session_state.history = {}
 if 'started' not in st.session_state:
     st.session_state.started = False
+if 'submitted' not in st.session_state:
+    st.session_state.submitted = False
 if 'start_time' not in st.session_state:
     st.session_state.start_time = None
+if 'last_result' not in st.session_state:
+    st.session_state.last_result = None
 
 # 타이틀 및 안내 문구
 st.title("🧬 [생명과학 II] 맞춤형 ZPD 진단 시스템")
@@ -18,10 +22,11 @@ st.markdown("문제를 풀고 제출하면 **정답률과 메타인지 확신도
 
 st.divider()
 
-# 1. 멘티 기본 정보 입력
+# 1. 멘티 기본 정보 입력 (진단 중일 때만 비활성화)
 col1, col2 = st.columns(2)
 with col1:
-    mentee_name = st.text_input("멘티 이름", value="", placeholder="이름을 입력하세요")
+    mentee_name = st.text_input("멘티 이름", value=st.session_state.get('saved_name', ''), placeholder="이름을 입력하세요", disabled=st.session_state.started)
+    st.session_state.saved_name = mentee_name
 with col2:
     selected_unit = st.selectbox("진단 단원 선택", [
         "1회차: 효소와 반응 속도", 
@@ -73,7 +78,7 @@ question_db = {
         {"q": "Q2. 하디-바인베르크 평형 집단에서 열성 표현형(aa) 개체의 빈도가 0.16일 때, 열성 대립유전자(a)의 빈도 q는?", "opts": ["0.16", "0.32", "0.4", "0.6"], "ans": "0.4"},
         {"q": "Q3. 위 집단(q=0.4, p=0.6)에서 이형접합자(Aa) 개체의 빈도 2pq는?", "opts": ["0.24", "0.36", "0.48", "0.52"], "ans": "0.48"},
         {"q": "Q4. 젖당 오페론에서 RNA 중합 효소가 직접 결합하여 전사를 시작하는 부위는?", "opts": ["프로모터(Promoter)", "작동 부위(Operator)", "조절 유전자", "구조 유전자"], "ans": "프로모터(Promoter)"},
-        {"q": "Q5. 대장균에서 포도당은 없고 젖당만 있을 때 젖당 오페론 전사가 최대화되는 이유는?", "opts": ["cAMP 농도가 높아져 CAP-cAMP 복합체가 프로모터에 결합하기 때문", "cAMP 농도가 낮아져 억제 단백질이 파괴되기 때문", "포도당이 억제 단백질을 활성화하기 때문", "RNA 중합 효소가 불활성화되기 때문"], "ans": "cAMP 농도가 높아져 CAP-cAMP 복합체가 프로모터에 결합하기 때문"},
+        {"q": "Q5. 대장균에서 포도당은 없고 젖당만 있을 때 젖당 오페론 전사가 최대화되는 이유는?", "opts": ["cAMP 농도가 높아져 CAP-cAMP 복합체가 프로모터에 결합하기 때문", "cAMP 농도가 낮아져 억제 단백질이 파괴되기 때문", "포도당이 억제 단백질을 활성화하기 때문", "RNA 중합 효소가 불활성화되기 때문"], "ans": "cAMP 농도가 낮아져 CAP-cAMP 복합체가 프로모터에 결합하기 때문"},
         {"q": "Q6. 하디-바인베르크 평형이 유지되기 위한 멘델 집단의 조건으로 옳지 않은 것은?", "opts": ["집단의 크기가 충분히 커야 한다.", "무작위 교배가 이루어져야 한다.", "자연선택과 돌연변이가 활발히 일어나야 한다.", "개체의 이입과 이출이 없어야 한다."], "ans": "자연선택과 돌연변이가 활발히 일어나야 한다."},
         {"q": "Q7. 소규모 집단에서 우연한 사건으로 인해 대립유전자 빈도가 예측 없이 급격히 변하는 현상을 무엇이라 하는가?", "opts": ["유전적 부드리(Genetic drift)", "자연선택", "유전자 흐름", "지리적 격리"], "ans": "유전적 부드리(Genetic drift)"},
         {"q": "Q8. 진핵생물에서 DNA 염기서열 변화 없이 DNA 메틸화나 히스톤 아세틸화 등을 통해 유전자 발현이 조절되는 학문 분야는?", "opts": ["후전유전학(Epigenetics)", "집단유전학", "멘델유전학", "전사유전학"], "ans": "후전유전학(Epigenetics)"},
@@ -82,19 +87,20 @@ question_db = {
     ]
 }
 
-# -------------------- 진단 시작 / 진행 제어 --------------------
-if not st.session_state.started:
+# -------------------- 화면 1: 진단 시작 전 --------------------
+if not st.session_state.started and not st.session_state.submitted:
     st.info("💡 준비가 완료되면 아래 **[⏱️ 진단 시작]** 버튼을 눌러주세요. 클릭 시 타이머가 가동됩니다.")
     if st.button("⏱️ 진단 시작 (10문항)", use_container_width=True):
         if not mentee_name.strip():
             st.error("멘티 이름을 먼저 입력해 주세요!")
         else:
             st.session_state.started = True
+            st.session_state.submitted = False
             st.session_state.start_time = time.time()
             st.rerun()
 
-else:
-    # 타이머 표시
+# -------------------- 화면 2: 진단 진행 중 --------------------
+elif st.session_state.started and not st.session_state.submitted:
     st.success(f"⏱️ **진단 진행 중입니다.** ({mentee_name} 멘티님, 차분하게 문제를 풀고 확신도를 체크해 주세요.)")
     
     questions = question_db[selected_unit]
@@ -105,113 +111,121 @@ else:
         
         for idx, q_data in enumerate(questions):
             st.markdown(f"#### **{q_data['q']}**")
-            
-            # 문제 답변
             user_answers[f"q_{idx}"] = st.radio(
                 f"정답 선택 (Q{idx+1})",
                 q_data["opts"],
                 index=None,
                 key=f"ans_{selected_unit}_{idx}"
             )
-            
-            # 문항별 개별 확신도 평가
             user_confidences[f"c_{idx}"] = st.slider(
                 f"💡 Q{idx+1} 확신도 (1점: 찍음 ~ 5점: 확신함)",
                 min_value=1, max_value=5, value=3,
                 key=f"conf_{selected_unit}_{idx}"
             )
-            st.write("") # 간격 조정
+            st.write("")
         
         submit_btn = st.form_submit_button("🚀 진단 결과 제출 및 처방전 보기", use_container_width=True)
 
-    # -------------------- 제출 처리 및 분석 --------------------
-    if submit_btn:
-        if any(ans is None for ans in user_answers.values()):
-            st.warning("⚠️ 아직 풀지 않은 문항이 있습니다! 모든 문항의 정답을 선택해 주세요.")
-        else:
-            # 1. 계산
-            elapsed_time = round(time.time() - st.session_state.start_time, 1)
-            correct_count = sum(1 for idx, q_data in enumerate(questions) if user_answers[f"q_{idx}"] == q_data["ans"])
-            total_questions = len(questions)
-            score = round((correct_count / total_questions) * 100)
-            avg_confidence = round(sum(user_confidences.values()) / total_questions, 2)
-            
-            # 2. 리포트 출력
-            st.divider()
-            st.balloons()
-            st.header(f"📊 {mentee_name} 멘티의 ZPD 진단 리포트")
-            
-            # 이전 진단 이력 비교 (Delta 계산)
-            prev_data = st.session_state.history.get(selected_unit)
-            
-            col_a, col_b, col_c = st.columns(3)
-            
-            if prev_data:
-                score_delta = score - prev_data['score']
-                conf_delta = round(avg_confidence - prev_data['avg_confidence'], 2)
-                time_delta = round(elapsed_time - prev_data['elapsed_time'], 1)
-                
-                col_a.metric("정답률 (주 지표)", f"{score}점 ({correct_count}/10문항)", delta=f"{score_delta:+d}점 (이전 대비)")
-                col_b.metric("평균 확신도 (주 지표)", f"{avg_confidence}점 / 5.0점", delta=f"{conf_delta:+.2f}점 (이전 대비)")
-                col_c.metric("소요 시간 (보조 지표)", f"{elapsed_time}초", delta=f"{time_delta:+.1f}초 (이전 대비)", delta_color="inverse")
-                st.caption(f"🔄 **재진단 비교 완료:** 이전 진단 기록과 비교된 변화량이 표시됩니다.")
+        if submit_btn:
+            if any(ans is None for ans in user_answers.values()):
+                st.warning("⚠️ 아직 풀지 않은 문항이 있습니다! 모든 문항의 답을 선택해 주세요.")
             else:
-                col_a.metric("정답률 (주 지표)", f"{score}점 ({correct_count}/10문항)")
-                col_b.metric("평균 확신도 (주 지표)", f"{avg_confidence}점 / 5.0점")
-                col_c.metric("소요 시간 (보조 지표)", f"{elapsed_time}초")
-                st.caption("ℹ️ 첫 번째 진단 결과입니다. 다시 진단하시면 변화량이 자동으로 측정됩니다.")
+                elapsed_time = round(time.time() - st.session_state.start_time, 1)
+                correct_count = sum(1 for idx, q_data in enumerate(questions) if user_answers[f"q_{idx}"] == q_data["ans"])
+                total_questions = len(questions)
+                score = round((correct_count / total_questions) * 100)
+                avg_confidence = round(sum(user_confidences.values()) / total_questions, 2)
 
-            # 3. 주 지표(정답률 + 확신도) 중심 인지 상태 및 ZPD 진단
-            st.subheader("💡 인지 상태 분석 및 맞춤형 학습 비계(Scaffolding) 처방")
-            
-            # 시간 보조 지표 체크 (10문항 기준 10분 = 600초 초과 시 병목 판단)
-            is_time_bottleneck = elapsed_time > 600
-            
-            # [진단 로직: 정답률 + 확신도 주 지표]
-            if score < 60 or (score < 70 and avg_confidence <= 2.5):
-                st.error("🔴 **Red Level (개념 재구조화 및 기초 비계 필요)**")
-                st.write("**[인지 분석]** 핵심 개념 스키마 형성이 미흡하며, 정답률과 확신도 모두 낮아 개념 이해에 어려움을 겪는 상태입니다.")
-                st.markdown("""
-                **[추천 비계 전략]**
-                * 시각적 이중코딩 맵을 활용한 핵심 탄소 골격 및 메커니즘 도식화 재학습
-                * 3단계 이하 핵심 청크화(Chunking) 빈칸 카드 활용
-                * 일상적 비유(Analogy) 기반 1:1 개념 재설명 진행
-                """)
-                
-            elif (60 <= score < 80) or (score >= 80 and avg_confidence <= 3.5) or is_time_bottleneck:
-                st.warning("🟡 **Yellow Level (절차화 및 단계적 비계 설정 필요) [ZPD 핵심 적정 구간]**")
-                
-                reason = []
-                if score < 80: reason.append("응용 문제 적용 숙달 필요")
-                if avg_confidence <= 3.5: reason.append("아는 것 같은 착각(친숙함 오류) 존재")
-                if is_time_bottleneck: reason.append("풀이 시간 과다로 인한 인지적 병목 발생")
-                
-                st.write(f"**[인지 분석]** 개념은 알고 있으나, 문제 적용 시 인지적 병목이 존재합니다. ({', '.join(reason)})")
-                st.markdown("""
-                **[추천 비계 전략]**
-                * 단계별 힌트 카드 제공 후 점진적으로 거두어내는 **'비계 제거(Fading)'** 적용
-                * 하디-바인베르크 3단계 계산 및 4-Condition Matrix 분석 알고리즘 적용
-                * 확신도가 낮았던 문항 위주의 백지 복기 및 원인 분석 멘토링
-                """)
-                
-            else:
-                st.success("🟢 **Green Level (완달성 및 파인만 역발상 추론 구간)**")
-                st.write("**[인지 분석]** 정답률과 메타인지 확신도가 모두 높으며, 개념이 장기 기억에 체계적으로 구조화된 상태입니다.")
-                st.markdown("""
-                **[추천 비계 전략]**
-                * **파인만 기법 기반 역발상 설명법(Reverse Teaching):** 멘티가 멘토에게 메커니즘을 쉬운 용어로 역설명
-                * '특정 효소 결손 시 기작 변화' 등 변형 조건(What-If) 질문을 통한 고난도 추론 확장
-                """)
-
-            # 4. 이력 업데이트 및 재진단 버튼
-            st.session_state.history[selected_unit] = {
-                'score': score,
-                'avg_confidence': avg_confidence,
-                'elapsed_time': elapsed_time
-            }
-            
-            st.divider()
-            if st.button("🔄 다른 단원 선택 또는 재진단하기", use_container_width=True):
-                st.session_state.started = False
+                st.session_state.last_result = {
+                    'unit': selected_unit,
+                    'score': score,
+                    'correct_count': correct_count,
+                    'total_questions': total_questions,
+                    'avg_confidence': avg_confidence,
+                    'elapsed_time': elapsed_time
+                }
+                st.session_state.submitted = True
                 st.rerun()
-            
+
+# -------------------- 화면 3: 진단 결과 출력 및 리셋 --------------------
+if st.session_state.submitted and st.session_state.last_result:
+    res = st.session_state.last_result
+    unit = res['unit']
+    
+    st.divider()
+    st.balloons()
+    st.header(f"📊 {mentee_name} 멘티의 ZPD 진단 리포트")
+    
+    prev_data = st.session_state.history.get(unit)
+    
+    col_a, col_b, col_c = st.columns(3)
+    if prev_data:
+        score_delta = res['score'] - prev_data['score']
+        conf_delta = round(res['avg_confidence'] - prev_data['avg_confidence'], 2)
+        time_delta = round(res['elapsed_time'] - prev_data['elapsed_time'], 1)
+        
+        col_a.metric("정답률 (주 지표)", f"{res['score']}점 ({res['correct_count']}/10문항)", delta=f"{score_delta:+d}점 (이전 대비)")
+        col_b.metric("평균 확신도 (주 지표)", f"{res['avg_confidence']}점 / 5.0점", delta=f"{conf_delta:+.2f}점 (이전 대비)")
+        col_c.metric("소요 시간 (보조 지표)", f"{res['elapsed_time']}초", delta=f"{time_delta:+.1f}초 (이전 대비)", delta_color="inverse")
+        st.caption("🔄 **재진단 비교 완료:** 이전 진단 기록과 비교된 변화량이 표시됩니다.")
+    else:
+        col_a.metric("정답률 (주 지표)", f"{res['score']}점 ({res['correct_count']}/10문항)")
+        col_b.metric("평균 확신도 (주 지표)", f"{res['avg_confidence']}점 / 5.0점")
+        col_c.metric("소요 시간 (보조 지표)", f"{res['elapsed_time']}초")
+        st.caption("ℹ️ 첫 번째 진단 결과입니다. 다시 진단하시면 변화량이 자동으로 측정됩니다.")
+
+    # 주 지표(정답률 + 확신도) 중심 인지 상태 및 ZPD 진단
+    st.subheader("💡 인지 상태 분석 및 맞춤형 학습 비계(Scaffolding) 처방")
+    score = res['score']
+    avg_confidence = res['avg_confidence']
+    elapsed_time = res['elapsed_time']
+    is_time_bottleneck = elapsed_time > 600
+
+    if score < 60 or (score < 70 and avg_confidence <= 2.5):
+        st.error("🔴 **Red Level (개념 재구조화 및 기초 비계 필요)**")
+        st.write("**[인지 분석]** 핵심 개념 스키마 형성이 미흡하며, 정답률과 확신도 모두 낮아 개념 이해에 어려움을 겪는 상태입니다.")
+        st.markdown("""
+        **[추천 비계 전략]**
+        * 시각적 이중코딩 맵을 활용한 핵심 탄소 골격 및 메커니즘 도식화 재학습
+        * 3단계 이하 핵심 청크화(Chunking) 빈칸 카드 활용
+        * 일상적 비유(Analogy) 기반 1:1 개념 재설명 진행
+        """)
+        
+    elif (60 <= score < 80) or (score >= 80 and avg_confidence <= 3.5) or is_time_bottleneck:
+        st.warning("🟡 **Yellow Level (절차화 및 단계적 비계 설정 필요) [ZPD 핵심 적정 구간]**")
+        reason = []
+        if score < 80: reason.append("응용 문제 적용 숙달 필요")
+        if avg_confidence <= 3.5: reason.append("아는 것 같은 착각(친숙함 오류) 존재")
+        if is_time_bottleneck: reason.append("풀이 시간 과다로 인한 인지적 병목 발생")
+        
+        st.write(f"**[인지 분석]** 개념은 알고 있으나, 문제 적용 시 인지적 병목이 존재합니다. ({', '.join(reason)})")
+        st.markdown("""
+        **[추천 비계 전략]**
+        * 단계별 힌트 카드 제공 후 점진적으로 거두어내는 **'비계 제거(Fading)'** 적용
+        * 하디-바인베르크 3단계 계산 및 4-Condition Matrix 분석 알고리즘 적용
+        * 확신도가 낮았던 문항 위주의 백지 복기 및 원인 분석 멘토링
+        """)
+        
+    else:
+        st.success("🟢 **Green Level (완달성 및 파인만 역발상 추론 구간)**")
+        st.write("**[인지 분석]** 정답률과 메타인지 확신도가 모두 높으며, 개념이 장기 기억에 체계적으로 구조화된 상태입니다.")
+        st.markdown("""
+        **[추천 비계 전략]**
+        * **파인만 기법 기반 역발상 설명법(Reverse Teaching):** 멘티가 멘토에게 메커니즘을 쉬운 용어로 역설명
+        * '특정 효소 결손 시 기작 변화' 등 변형 조건(What-If) 질문을 통한 고난도 추론 확장
+        """)
+
+    st.divider()
+    
+    # 다른 단원 선택 또는 재진단 버튼 (클릭 시 전 상태 완전 초기화)
+    if st.button("🔄 다른 단원 선택 또는 재진단하기", use_container_width=True):
+        st.session_state.history[unit] = {
+            'score': score,
+            'avg_confidence': avg_confidence,
+            'elapsed_time': elapsed_time
+        }
+        st.session_state.started = False
+        st.session_state.submitted = False
+        st.session_state.last_result = None
+        st.rerun()
+        
